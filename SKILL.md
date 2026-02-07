@@ -62,6 +62,7 @@ Claude 应当：
 4. 所有列表查询必须实现分页
 5. 前端页面中相同展示逻辑必须抽象为公共组件
 6. 涉及多表写操作时必须使用事务
+7. **所有前端 Mock 数据必须且只能存放在 `frontend/src/mock_data/modules/` 目录下**，按业务模块组织（与 `services/modules/` 一一对应），通过 `.env` 中 `VITE_API_MOCK_DATA=true` 开关控制，在 API 层（`services/http.ts`）拦截，禁止在组件或其他位置硬编码 mock 数据。详见 [references/frontend.md](references/frontend.md) 第 4 节。
 
 ### 审查/优化现有代码时
 Claude 应当：

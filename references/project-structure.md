@@ -171,11 +171,18 @@ project-root/
 │   │   │   └── guards.tsx              # 路由守卫（登录检查等）
 │   │   │
 │   │   ├── services/                   # ── API 请求层 ──
-│   │   │   ├── http.ts                 # Axios 实例封装（拦截器、Token 注入、统一错误处理）
+│   │   │   ├── http.ts                 # Axios 实例封装（拦截器、Token 注入、Mock 拦截、统一错误处理）
 │   │   │   ├── types.ts                # ApiResponse<T>, PaginatedData<T> 等类型
 │   │   │   └── modules/
 │   │   │       ├── auth.ts
 │   │   │       └── user.ts
+│   │   │
+│   │   ├── mock_data/                  # ── Mock 数据（VITE_API_MOCK_DATA=true 时启用） ──
+│   │   │   ├── index.ts                # Mock 路由注册表（URL → handler 映射）
+│   │   │   ├── _helpers.ts             # 工具函数（mockSuccess, mockPaginate, mockDelay）
+│   │   │   └── modules/               # 按业务模块组织，与 services/modules/ 一一对应
+│   │   │       ├── auth.mock.ts
+│   │   │       └── user.mock.ts
 │   │   │
 │   │   ├── hooks/                      # ── 自定义 Hooks ──
 │   │   │   ├── useAuth.ts
@@ -252,6 +259,7 @@ project-root/
 | `pages/xx/` | 按业务模块组织的页面 | 列表页、详情页、创建页 | 公共组件 |
 | `pages/xx/components/` | 该模块页面的私有组件 | UserForm（仅 users 模块用） | 跨页面组件（应提升到 components/） |
 | `services/modules/` | API 请求函数 | userApi.getList()、userApi.create() | 业务逻辑、UI 逻辑 |
+| `mock_data/modules/` | Mock 数据（与 services/modules 一一对应） | user.mock.ts、auth.mock.ts | 真实业务逻辑、组件代码 |
 | `hooks/` | 可复用的状态逻辑 | usePagination、useDebounce | 一次性逻辑（留在页面内） |
 | `stores/` | 全局客户端状态 | 认证状态、主题切换 | 服务端数据缓存（用 React Query） |
 
@@ -284,6 +292,7 @@ project-root/
   │   ├─ 仅某模块使用的组件？   → frontend/src/pages/{模块}/components/
   │   ├─ 页面？                 → frontend/src/pages/{模块}/
   │   ├─ API 请求？             → frontend/src/services/modules/
+│   ├─ Mock 数据？            → frontend/src/mock_data/modules/
   │   ├─ 可复用的 Hook？        → frontend/src/hooks/
   │   ├─ 全局状态？             → frontend/src/stores/
   │   └─ 工具函数/常量/类型？   → frontend/src/utils/ | constants/ | types/

@@ -272,7 +272,248 @@ export const userApi = {
 
 ---
 
-## 4. 状态管理
+## 4. Mock 数据规范
+
+### 配置开关
+
+在 `.env` 中增加 `VITE_API_MOCK_DATA` 配置项，值为 `true` 时，所有 API 请求直接返回本地 Mock 数据，不发送真实网络请求：
+
+```bash
+# .env.development
+VITE_API_BASE_URL=http://localhost:3000
+VITE_API_MOCK_DATA=true     # true: 使用 mock 数据 | false: 请求真实 API
+```
+
+```bash
+# .env.production — 生产环境永远关闭
+VITE_API_MOCK_DATA=false
+```
+
+### 目录结构
+
+```
+src/
+├── mock_data/                     # Mock 数据集中管理
+│   ├── index.ts                   # Mock 路由注册表（URL → handler 映射）
+│   ├── _helpers.ts                # Mock 工具函数（分页模拟、延迟、ID 生成）
+│   └── modules/
+│       ├── user.mock.ts           # 用户模块 mock 数据
+│       ├── auth.mock.ts           # 认证模块 mock 数据
+│       └── order.mock.ts          # 订单模块 mock 数据
+├── services/
+│   ├── http.ts                    # HTTP 客户端（在此拦截 mock）
+│   └── ...
+```
+
+### Mock 路由注册表
+
+```typescript
+// src/mock_data/index.ts
+import { userMocks } from './modules/user.mock';
+import { authMocks } from './modules/auth.mock';
+
+export interface MockHandler {
+  /** 匹配 HTTP 方法 */
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** 匹配 URL（支持正则） */
+  url: string | RegExp;
+  /** 返回 mock 响应，入参为请求信息 */
+  handler: (config: { params?: any; data?: any; url?: string }) => any;
+}
+
+/** 所有 mock 路由，按模块注册 */
+export const mockHandlers: MockHandler[] = [
+  ...authMocks,
+  ...userMocks,
+];
+```
+
+### Mock 模块示例
+
+```typescript
+// src/mock_data/modules/user.mock.ts
+import type { MockHandler } from '../index';
+import { mockPaginate, mockSuccess } from '../_helpers';
+
+const users = Array.from({ length: 55 }, (_, i) => ({
+  id: i + 1,
+  name: `用户${i + 1}`,
+  email: `user${i + 1}@example.com`,
+  status: i % 5 === 0 ? 'disabled' : 'active',
+  createdAt: new Date(Date.now() - i * 86400000).toISOString(),
+}));
+
+export const userMocks: MockHandler[] = [
+  {
+    method: 'GET',
+    url: '/api/v1/users',
+    handler: ({ params }) => {
+      const { page = 1, pageSize = 20, keyword, status } = params || {};
+      let filtered = [...users];
+      if (keyword) filtered = filtered.filter(u => u.name.includes(keyword));
+      if (status) filtered = filtered.filter(u => u.status === status);
+      return mockSuccess(mockPaginate(filtered, page, pageSize));
+    },
+  },
+  {
+    method: 'GET',
+    url: /^\/api\/v1\/users\/\d+$/,
+    handler: ({ url }) => {
+      const id = Number(url?.split('/').pop());
+      const user = users.find(u => u.id === id);
+      return user ? mockSuccess(user) : { code: 11001, message: '用户不存在', data: null };
+    },
+  },
+  {
+    method: 'POST',
+    url: '/api/v1/users',
+    handler: ({ data }) => mockSuccess({ id: users.length + 1, ...data, createdAt: new Date().toISOString() }),
+  },
+  {
+    method: 'DELETE',
+    url: /^\/api\/v1\/users\/\d+$/,
+    handler: () => mockSuccess(null),
+  },
+];
+```
+
+### Mock 工具函数
+
+```typescript
+// src/mock_data/_helpers.ts
+
+/** 包装为统一成功响应格式 */
+export function mockSuccess<T>(data: T) {
+  return { code: 0, message: 'success', data };
+}
+
+/** 模拟分页 */
+export function mockPaginate<T>(list: T[], page: number, pageSize: number) {
+  const start = (page - 1) * pageSize;
+  return {
+    list: list.slice(start, start + pageSize),
+    pagination: {
+      page: Number(page),
+      pageSize: Number(pageSize),
+      total: list.length,
+      totalPages: Math.ceil(list.length / pageSize),
+    },
+  };
+}
+
+/** 模拟网络延迟 */
+export function mockDelay(ms: number = 300): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+```
+
+### API 层拦截（核心）
+
+在 `services/http.ts` 中拦截请求，`VITE_API_MOCK_DATA=true` 时直接匹配 mock handler 返回数据，**不发送真实请求**：
+
+```typescript
+// services/http.ts
+import axios from 'axios';
+import type { ApiResponse } from './types';
+
+const IS_MOCK = import.meta.env.VITE_API_MOCK_DATA === 'true';
+
+// 仅在 mock 模式下加载 mock 数据（避免打包到生产）
+let mockHandlers: import('../mock_data').MockHandler[] = [];
+if (IS_MOCK) {
+  import('../mock_data').then(m => { mockHandlers = m.mockHandlers; });
+}
+
+const http = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL,
+  timeout: 15000,
+});
+
+// ─── Mock 拦截器（最先注册，优先级最高） ───
+if (IS_MOCK) {
+  http.interceptors.request.use(async (config) => {
+    const { mockDelay } = await import('../mock_data/_helpers');
+    const method = (config.method || 'GET').toUpperCase();
+    const url = config.url || '';
+
+    const matched = mockHandlers.find(h => {
+      if (h.method !== method) return false;
+      if (h.url instanceof RegExp) return h.url.test(url);
+      return h.url === url;
+    });
+
+    if (matched) {
+      await mockDelay(); // 模拟网络延迟
+      const mockResponse = matched.handler({
+        params: config.params,
+        data: config.data ? JSON.parse(config.data) : undefined,
+        url,
+      });
+      // 通过 adapter 返回 mock 响应，阻断真实请求
+      config.adapter = () =>
+        Promise.resolve({
+          data: mockResponse,
+          status: 200,
+          statusText: 'OK (Mock)',
+          headers: {},
+          config,
+        });
+
+      if (import.meta.env.DEV) {
+        console.log(`[Mock] ${method} ${url}`, mockResponse);
+      }
+    }
+    return config;
+  });
+}
+
+// ─── 正常拦截器 ───
+http.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+http.interceptors.response.use(
+  (response) => {
+    const { code, message, data } = response.data as ApiResponse;
+    if (code !== 0) {
+      if (code === 10002) {
+        redirectToLogin();
+        return Promise.reject(new Error(message));
+      }
+      toast.error(message);
+      return Promise.reject(new Error(message));
+    }
+    return data;
+  },
+  (error) => {
+    if (!error.response) {
+      toast.error('网络连接失败，请检查网络');
+    } else {
+      toast.error(`服务器错误 (${error.response.status})`);
+    }
+    return Promise.reject(error);
+  },
+);
+
+export default http;
+```
+
+### 关键规则
+
+1. **Mock 数据格式必须与真实 API 完全一致** — 遵循统一响应格式 `{ code, message, data }`，分页接口遵循分页响应格式
+2. **Mock 文件按模块组织** — 一个业务模块对应一个 `xxx.mock.ts`，与 `services/modules/` 一一对应
+3. **动态导入** — 使用 `import()` 动态加载 mock 模块，确保 `VITE_API_MOCK_DATA=false` 时 mock 代码不会打包到生产环境
+4. **拦截点在 API 层** — 通过 Axios 拦截器实现，业务组件和 service 层代码无需任何改动
+5. **开发环境控制台日志** — Mock 命中时在控制台打印 `[Mock] GET /api/v1/users`，方便调试
+6. **切换无感知** — 关闭 `VITE_API_MOCK_DATA` 后，所有请求自动走真实 API，零代码改动
+
+---
+
+## 5. 状态管理
 
 ### 选择原则
 
@@ -291,7 +532,7 @@ export const userApi = {
 
 ---
 
-## 5. 错误处理
+## 6. 错误处理
 
 ### 错误边界
 
@@ -354,7 +595,7 @@ return <DataTable data={data.list} />;
 
 ---
 
-## 6. 性能优化
+## 7. 性能优化
 
 | 技术 | 应用场景 | 实现 |
 |------|----------|------|
@@ -367,7 +608,7 @@ return <DataTable data={data.list} />;
 
 ---
 
-## 7. 表单处理规范
+## 8. 表单处理规范
 
 ### 统一规则
 
@@ -396,7 +637,7 @@ const { mutate, isPending } = useMutation({
 
 ---
 
-## 8. 国际化准备
+## 9. 国际化准备
 
 即使当前只有一种语言，也应遵循以下规则以便未来扩展：
 

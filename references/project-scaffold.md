@@ -273,6 +273,9 @@ NODE_ENV=development
 PORT=3000
 API_PREFIX=/api/v1
 
+# ===== 前端 Mock =====
+# VITE_API_MOCK_DATA=true   # true: 使用 mock 数据 | false: 请求真实 API
+
 # ===== 数据库 =====
 DB_HOST=localhost
 DB_PORT=5432

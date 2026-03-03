@@ -86,7 +86,7 @@ backend/
 │               └── user.entity.ts
 ├── test/
 │   ├── unit/
-│   └── e2e/
+│   └── integration/
 ├── .env.example
 ├── .eslintrc.js
 ├── .prettierrc
@@ -203,20 +203,21 @@ frontend/
 ### 后端 Dockerfile
 
 ```dockerfile
-# 多阶段构建
+# 多阶段构建 — 第一阶段：构建
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci
 COPY . .
 RUN npm run build
 
+# 第二阶段：运行时（仅包含生产依赖）
 FROM node:20-alpine
 RUN addgroup -g 1001 -S appuser && adduser -S appuser -u 1001
 WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
 USER appuser
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
@@ -273,8 +274,7 @@ NODE_ENV=development
 PORT=3000
 API_PREFIX=/api/v1
 
-# ===== 前端 Mock =====
-# VITE_API_MOCK_DATA=true   # true: 使用 mock 数据 | false: 请求真实 API
+
 
 # ===== 数据库 =====
 DB_HOST=localhost

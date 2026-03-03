@@ -99,15 +99,52 @@ export function Pagination({
 }
 ```
 
+### 自定义 Hook：usePagination
+
+分页逻辑可复用，必须封装为 Hook：
+
+```tsx
+// hooks/usePagination.ts
+import { useState } from 'react';
+
+interface PaginationState {
+  page: number;
+  pageSize: number;
+}
+
+export function usePagination(initialPageSize: number = 20) {
+  const [pagination, setPagination] = useState<PaginationState>({
+    page: 1,
+    pageSize: initialPageSize,
+  });
+
+  const handlePaginationChange = (page: number, pageSize: number) => {
+    setPagination({ page, pageSize });
+  };
+
+  const resetPage = () => {
+    setPagination({ ...pagination, page: 1 });
+  };
+
+  return {
+    page: pagination.page,
+    pageSize: pagination.pageSize,
+    pagination,
+    onChange: handlePaginationChange,
+    resetPage,
+  };
+}
+```
+
 ### 列表页面标准模板
 
-每个列表页面的结构应保持一致：
+每个列表页面的结构应保持一致，使用 `usePagination` Hook 管理分页：
 
 ```tsx
 export function UserListPage() {
   // 1. 状态
   const [filters, setFilters] = useState<UserFilters>({});
-  const [pagination, setPagination] = useState({ page: 1, pageSize: 20 });
+  const { page, pageSize, pagination, onChange: onPaginationChange, resetPage } = usePagination();
 
   // 2. 数据请求
   const { data, isLoading, error } = useQuery({
@@ -115,11 +152,17 @@ export function UserListPage() {
     queryFn: () => userApi.getList({ ...filters, ...pagination }),
   });
 
-  // 3. 渲染 — 统一结构
+  // 3. 过滤器变化时重置分页
+  const handleFilterChange = (newFilters: UserFilters) => {
+    setFilters(newFilters);
+    resetPage();
+  };
+
+  // 4. 渲染 — 统一结构
   return (
     <div>
       <PageHeader title="用户管理" actions={<CreateButton />} />
-      <SearchForm fields={filterFields} onSearch={setFilters} />
+      <SearchForm fields={filterFields} onSearch={handleFilterChange} />
 
       {isLoading && <LoadingState />}
       {error && <ErrorState error={error} />}
@@ -130,7 +173,7 @@ export function UserListPage() {
             page={data.pagination.page}
             pageSize={data.pagination.pageSize}
             total={data.pagination.total}
-            onChange={(page, pageSize) => setPagination({ page, pageSize })}
+            onChange={onPaginationChange}
           />
         </>
       )}
@@ -138,6 +181,150 @@ export function UserListPage() {
   );
 }
 ```
+
+### 创建/编辑页面标准模板
+
+#### UserForm 私有组件
+
+创建和编辑页面共用一个表单组件，通过 `mode` prop 区分：
+
+```tsx
+// pages/users/components/UserForm.tsx
+interface UserFormProps {
+  mode: 'create' | 'edit';
+  defaultValues?: User;
+  onSuccess?: () => void;
+}
+
+export function UserForm({ mode, defaultValues, onSuccess }: UserFormProps) {
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<User>({
+    defaultValues: defaultValues || {},
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data: User) => userApi.create(data),
+    onSuccess: () => {
+      toast.success('用户创建成功');
+      onSuccess?.();
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: User) => userApi.update(defaultValues?.id!, data),
+    onSuccess: () => {
+      toast.success('用户更新成功');
+      onSuccess?.();
+    },
+  });
+
+  const onSubmit = (data: User) => {
+    if (mode === 'create') {
+      createMutation.mutate(data);
+    } else {
+      updateMutation.mutate(data);
+    }
+  };
+
+  const isLoading = createMutation.isPending || updateMutation.isPending;
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)}>
+      <div>
+        <label>姓名</label>
+        <input {...register('name', { required: '姓名必填' })} />
+        {errors.name && <span>{errors.name.message}</span>}
+      </div>
+
+      <div>
+        <label>邮箱</label>
+        <input {...register('email', { required: '邮箱必填', pattern: /^\S+@\S+$/ })} />
+        {errors.email && <span>{errors.email.message}</span>}
+      </div>
+
+      <button type="submit" disabled={isLoading}>
+        {isLoading ? '提交中...' : mode === 'create' ? '创建' : '更新'}
+      </button>
+    </form>
+  );
+}
+```
+
+#### UserCreate 页面
+
+```tsx
+// pages/users/UserCreate/index.tsx
+import { useNavigate } from 'react-router-dom';
+import { UserForm } from '../components/UserForm';
+import { PageHeader } from '@/components/common/PageHeader';
+
+export default function UserCreatePage() {
+  const navigate = useNavigate();
+
+  const handleSuccess = () => {
+    // 创建成功后跳转到列表页
+    navigate('/users');
+  };
+
+  return (
+    <div>
+      <PageHeader title="新建用户" backTo="/users" />
+      <UserForm mode="create" onSuccess={handleSuccess} />
+    </div>
+  );
+}
+```
+
+#### UserEdit 页面
+
+```tsx
+// pages/users/UserEdit/index.tsx
+import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { UserForm } from '../components/UserForm';
+import { PageHeader } from '@/components/common/PageHeader';
+import { LoadingState } from '@/components/common/LoadingState';
+import { ErrorState } from '@/components/common/ErrorState';
+import { userApi } from '@/services/modules/user';
+
+export default function UserEditPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+
+  const { data: user, isLoading, error } = useQuery({
+    queryKey: ['user', id],
+    queryFn: () => userApi.getById(Number(id)),
+    enabled: !!id,
+  });
+
+  const handleSuccess = () => {
+    // 编辑成功后跳转到详情页
+    navigate(`/users/${id}`);
+  };
+
+  if (isLoading) return <LoadingState />;
+  if (error) return <ErrorState error={error} />;
+  if (!user) return <ErrorState error={new Error('用户不存在')} />;
+
+  return (
+    <div>
+      <PageHeader title="编辑用户" backTo={`/users/${id}`} />
+      <UserForm mode="edit" defaultValues={user} onSuccess={handleSuccess} />
+    </div>
+  );
+}
+```
+
+### 页面私有组件提升标准
+
+页面私有组件何时应提升为公共组件：
+
+| 条件 | 处置 |
+|------|------|
+| 组件**仅在本模块**（1 个以上页面）使用 | 保留在 `pages/{模块}/components/` |
+| 组件**跨 2 个以上模块**使用 | 提升至 `components/common/`（如 PageHeader、DataTable） |
+| 组件**仅 1 个页面内使用** | 保留在页面文件内，无需单独文件（如复杂的表单字段组件） |
+
+**转移规则**：如果发现私有组件在第二个模块被引用，立即提升为公共组件，避免代码重复。
 
 ---
 
@@ -149,12 +336,17 @@ src/
 │   ├── common/
 │   ├── layout/
 │   └── feedback/
-├── pages/              # 页面组件
+├── pages/              # 页面组件（按业务模块组织）
 │   └── users/
-│       ├── index.tsx           # 列表页
-│       ├── detail.tsx          # 详情页
-│       ├── create.tsx          # 创建页
-│       └── components/         # 页面私有组件（仅此页面使用）
+│       ├── UserList/           # 列表页
+│       │   └── index.tsx
+│       ├── UserDetail/         # 详情页
+│       │   └── index.tsx
+│       ├── UserCreate/         # 创建页
+│       │   └── index.tsx
+│       ├── UserEdit/           # 编辑页
+│       │   └── index.tsx
+│       └── components/         # 页面私有组件（仅此模块页面使用）
 │           └── UserForm.tsx
 ├── hooks/              # 自定义 Hooks
 │   ├── useAuth.ts
@@ -174,6 +366,126 @@ src/
 ├── constants/          # 常量定义
 ├── types/              # 全局类型
 └── styles/             # 全局样式
+```
+
+---
+
+## 2.1 路由配置
+
+### router/index.tsx — 路由表
+
+使用 `createBrowserRouter` + `React.lazy` 进行懒加载：
+
+```tsx
+import { createBrowserRouter, RouteObject } from 'react-router-dom';
+import { Suspense } from 'react';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { LoadingState } from '@/components/common/LoadingState';
+import { authGuard } from './guards';
+
+// 懒加载页面
+const UserListPage = lazy(() => import('@/pages/users/UserList'));
+const UserDetailPage = lazy(() => import('@/pages/users/UserDetail'));
+const UserCreatePage = lazy(() => import('@/pages/users/UserCreate'));
+const UserEditPage = lazy(() => import('@/pages/users/UserEdit'));
+const LoginPage = lazy(() => import('@/pages/auth/Login'));
+
+const routes: RouteObject[] = [
+  {
+    path: '/login',
+    element: <LoginPage />,
+  },
+  {
+    path: '/',
+    element: <AppLayout />,
+    errorElement: <ErrorPage />,
+    children: [
+      {
+        path: 'users',
+        children: [
+          {
+            path: '',
+            element: (
+              <ErrorBoundary>
+                <Suspense fallback={<LoadingState />}>
+                  <UserListPage />
+                </Suspense>
+              </ErrorBoundary>
+            ),
+          },
+          {
+            path: ':id',
+            element: (
+              <ErrorBoundary>
+                <Suspense fallback={<LoadingState />}>
+                  <UserDetailPage />
+                </Suspense>
+              </ErrorBoundary>
+            ),
+          },
+          {
+            path: 'create',
+            element: (
+              <ErrorBoundary>
+                <Suspense fallback={<LoadingState />}>
+                  <UserCreatePage />
+                </Suspense>
+              </ErrorBoundary>
+            ),
+          },
+          {
+            path: ':id/edit',
+            element: (
+              <ErrorBoundary>
+                <Suspense fallback={<LoadingState />}>
+                  <UserEditPage />
+                </Suspense>
+              </ErrorBoundary>
+            ),
+          },
+        ],
+      },
+    ],
+  },
+];
+
+export const router = createBrowserRouter(routes);
+```
+
+### router/guards.tsx — 认证守卫
+
+路由守卫检查认证状态，未登录则重定向到登录页：
+
+```tsx
+import { Navigate } from 'react-router-dom';
+import { useAuthStore } from '@/stores/auth.store';
+
+export function authGuard() {
+  const { token, isAuthenticated } = useAuthStore();
+
+  // 如果未登录，重定向到登录页
+  if (!isAuthenticated || !token) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return null;
+}
+
+// 在路由配置中使用
+// 方案 1：包裹页面组件
+// <ProtectedRoute element={<UserListPage />} />
+
+// 方案 2：使用 loader （推荐 React Router v6.4+）
+// {
+//   path: 'users',
+//   loader: async () => {
+//     if (!useAuthStore.getState().isAuthenticated) {
+//       return redirect('/login');
+//     }
+//     return null;
+//   },
+//   element: <UserListPage />,
+// }
 ```
 
 ---

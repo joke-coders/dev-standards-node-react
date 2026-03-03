@@ -165,12 +165,18 @@ frontend/
 │   │   │   └── Navbar/
 │   │   └── feedback/
 │   │       └── Toast/
-│   ├── pages/                     # 页面
+│   ├── pages/                     # 页面（按业务模块组织）
 │   │   └── users/
-│   │       ├── index.tsx          # 列表页
-│   │       ├── detail.tsx
-│   │       ├── create.tsx
-│   │       └── components/        # 页面私有组件
+│   │       ├── UserList/          # 列表页
+│   │       │   └── index.tsx
+│   │       ├── UserDetail/        # 详情页
+│   │       │   └── index.tsx
+│   │       ├── UserCreate/        # 创建页
+│   │       │   └── index.tsx
+│   │       ├── UserEdit/          # 编辑页
+│   │       │   └── index.tsx
+│   │       └── components/        # 页面私有组件（仅此模块页面使用）
+│   │           └── UserForm.tsx
 │   ├── hooks/                     # 自定义 Hooks
 │   │   ├── useAuth.ts
 │   │   ├── usePagination.ts
